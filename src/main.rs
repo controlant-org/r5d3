@@ -1,12 +1,26 @@
 use anyhow::Result;
 use argh::FromArgs;
-use aws_config::{default_provider::credentials::DefaultCredentialsChain, sts::AssumeRoleProvider};
+use aws_config::{
+  default_provider::{credentials::DefaultCredentialsChain, region::DefaultRegionChain},
+  sts::AssumeRoleProvider,
+};
 use aws_sdk_route53::model as rm;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::sleep;
 use tokio_stream::StreamExt;
-use tracing::{info, span, Level};
+
+// tracing
+use opentelemetry::{
+  sdk::{
+    trace::{self, RandomIdGenerator, Sampler},
+    Resource,
+  },
+  KeyValue,
+};
+use opentelemetry_otlp::WithExportConfig;
+use tracing::{debug, debug_span, info, info_span, Instrument};
+use tracing_subscriber::{filter::LevelFilter, layer::SubscriberExt, util::SubscriberInitExt};
 
 #[derive(Debug, FromArgs)]
 /// DNS promoter
@@ -34,110 +48,154 @@ struct App {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-  tracing_subscriber::fmt::init();
+  let tracer = opentelemetry_otlp::new_pipeline()
+    .tracing()
+    .with_exporter(
+      opentelemetry_otlp::new_exporter()
+        .tonic()
+        .with_endpoint("http://localhost:4317")
+        .with_timeout(Duration::from_secs(3)),
+    )
+    .with_trace_config(
+      trace::config()
+        .with_sampler(Sampler::AlwaysOn)
+        .with_id_generator(RandomIdGenerator::default())
+        .with_resource(Resource::new(vec![KeyValue::new("service.name", "r5d3")])),
+    )
+    .install_batch(opentelemetry::runtime::Tokio)?;
+
+  let tracer = tracing_opentelemetry::layer().with_tracer(tracer);
+
+  let stdout_logger = tracing_subscriber::fmt::layer();
+
+  tracing_subscriber::registry()
+    .with(LevelFilter::INFO)
+    .with(stdout_logger)
+    .with(tracer)
+    .init();
+
   let app: App = argh::from_env();
-  info!("loaded config: {:?}", app);
+  debug!("loaded config: {:?}", app);
 
   loop {
-    let base_aws_config = aws_config::load_from_env().await;
-    let region = base_aws_config.region().unwrap().clone();
+    main_loop(&app).instrument(info_span!("main_loop")).await?;
 
-    let root_r53 = {
-      let _ = span!(Level::INFO, "configuring root route53 client").entered();
+    if app.once {
+      break;
+    }
 
-      if let Some(root_role) = app.root_role.as_ref() {
-        info!(root_role, "using root role");
-        let provider = AssumeRoleProvider::builder(root_role)
-          .session_name("ctrl-cidr")
-          .region(region.clone())
-          .build(Arc::new(DefaultCredentialsChain::builder().build().await) as Arc<_>);
+    sleep(Duration::from_secs(5 * 60)).await;
+  }
 
-        let root_config = aws_config::from_env().credentials_provider(provider).load().await;
-        aws_sdk_route53::Client::new(&root_config)
-      } else {
-        info!("no root role");
-        aws_sdk_route53::Client::new(&base_aws_config)
-      }
-    };
+  opentelemetry::global::shutdown_tracer_provider();
 
-    let rid = root_r53
-      .list_hosted_zones()
-      .send()
-      .await?
-      .hosted_zones()
-      .unwrap()
-      .into_iter()
-      .find(|hz| hz.name().unwrap().starts_with(&app.root_domain))
-      .unwrap()
-      .id()
-      .unwrap()
-      .to_string();
+  Ok(())
+}
 
-    for sub_role in app.sub_roles.iter() {
-      let provider = AssumeRoleProvider::builder(sub_role)
+async fn main_loop(app: &App) -> Result<()> {
+  let region = DefaultRegionChain::builder()
+    .build()
+    .region()
+    .instrument(debug_span!("loading default region"))
+    .await
+    .unwrap();
+
+  let root_r53 = {
+    if let Some(root_role) = app.root_role.as_ref() {
+      info!(root_role, "using root role");
+      let provider = AssumeRoleProvider::builder(root_role)
         .session_name("ctrl-cidr")
         .region(region.clone())
         .build(Arc::new(DefaultCredentialsChain::builder().build().await) as Arc<_>);
 
-      let sub_config = aws_config::from_env().credentials_provider(provider).load().await;
-      let sub_r53 = aws_sdk_route53::Client::new(&sub_config);
-      let mut zones = sub_r53.list_hosted_zones().into_paginator().items().send();
+      let root_config = aws_config::from_env()
+        .credentials_provider(provider)
+        .load()
+        .instrument(debug_span!("performing assume role"))
+        .await;
+      aws_sdk_route53::Client::new(&root_config)
+    } else {
+      info!("no root role");
+      let base_aws_config = aws_config::load_from_env()
+        .instrument(debug_span!("load aws config from env"))
+        .await;
+      aws_sdk_route53::Client::new(&base_aws_config)
+    }
+  };
 
-      while let Some(Ok(zone)) = zones.next().await {
-        // ignore private zones
-        if zone.config().unwrap().private_zone() {
-          continue;
-        }
+  let rid = root_r53
+    .list_hosted_zones()
+    .send()
+    .instrument(info_span!("list hosted zones on root domain"))
+    .await?
+    .hosted_zones()
+    .unwrap()
+    .into_iter()
+    .find(|hz| hz.name().unwrap().starts_with(&app.root_domain))
+    .unwrap()
+    .id()
+    .unwrap()
+    .to_string();
 
-        // first ensure the zone is delegated to the root domain
-        let nsrr: Vec<_> = sub_r53
-          .get_hosted_zone()
-          .id(zone.id().unwrap())
-          .send()
-          .await?
-          .delegation_set()
-          .unwrap()
-          .name_servers()
-          .unwrap()
-          .iter()
-          .map(|ns| rm::ResourceRecord::builder().value(ns).build())
-          .collect();
+  info!(id = rid, "found root domain zone id");
 
-        let cb = rm::ChangeBatch::builder()
-          .changes(
-            rm::Change::builder()
-              .action(rm::ChangeAction::Upsert)
-              .resource_record_set(
-                rm::ResourceRecordSet::builder()
-                  .r#type(rm::RrType::Ns)
-                  .name(zone.name().unwrap())
-                  .set_resource_records(Some(nsrr))
-                  .ttl(86400)
-                  .build(),
-              )
-              .build(),
-          )
-          .build();
+  for sub_role in app.sub_roles.iter() {
+    let provider = AssumeRoleProvider::builder(sub_role)
+      .session_name("ctrl-cidr")
+      .region(region.clone())
+      .build(Arc::new(DefaultCredentialsChain::builder().build().await) as Arc<_>);
 
-        if app.dry_run {
-          info!("would upsert NS record: {:?}", &cb);
-        } else {
-          root_r53
-            .change_resource_record_sets()
-            .hosted_zone_id(&rid)
-            .change_batch(cb)
-            .send()
-            .await?;
-        }
+    let sub_config = aws_config::from_env().credentials_provider(provider).load().await;
+    let sub_r53 = aws_sdk_route53::Client::new(&sub_config);
+    let mut zones = sub_r53.list_hosted_zones().into_paginator().items().send();
+
+    while let Some(Ok(zone)) = zones.next().await {
+      // ignore private zones
+      if zone.config().unwrap().private_zone() {
+        debug!(name = zone.name(), id = zone.id(), "skipping private zone");
+        continue;
       }
 
-      //
-    }
+      // first ensure the zone is delegated to the root domain
+      let nsrr: Vec<_> = sub_r53
+        .get_hosted_zone()
+        .id(zone.id().unwrap())
+        .send()
+        .await?
+        .delegation_set()
+        .unwrap()
+        .name_servers()
+        .unwrap()
+        .iter()
+        .map(|ns| rm::ResourceRecord::builder().value(ns).build())
+        .collect();
 
-    if app.once {
-      break;
-    } else {
-      sleep(Duration::from_secs(5 * 60)).await;
+      let cb = rm::ChangeBatch::builder()
+        .changes(
+          rm::Change::builder()
+            .action(rm::ChangeAction::Upsert)
+            .resource_record_set(
+              rm::ResourceRecordSet::builder()
+                .r#type(rm::RrType::Ns)
+                .name(zone.name().unwrap())
+                .set_resource_records(Some(nsrr))
+                .ttl(86400)
+                .build(),
+            )
+            .build(),
+        )
+        .build();
+
+      if app.dry_run {
+        info!("would upsert NS record: {:?}", &cb);
+      } else {
+        root_r53
+          .change_resource_record_sets()
+          .hosted_zone_id(&rid)
+          .change_batch(cb)
+          .send()
+          .await?;
+      }
     }
   }
 

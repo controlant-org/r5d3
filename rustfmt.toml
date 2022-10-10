@@ -4,3 +4,4 @@ newline_style = "Unix"
 edition = "2021"
 imports_granularity = "Crate"
 unstable_features = true
+group_imports = "StdExternalCrate"
