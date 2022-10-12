@@ -19,7 +19,7 @@ use opentelemetry::{
   KeyValue,
 };
 use opentelemetry_otlp::WithExportConfig;
-use tracing::{debug, debug_span, info, info_span, Instrument};
+use tracing::{debug, debug_span, info, info_span, instrument, trace_span, Instrument};
 use tracing_subscriber::{filter::LevelFilter, layer::SubscriberExt, util::SubscriberInitExt};
 
 #[derive(Debug, FromArgs)]
@@ -78,7 +78,7 @@ async fn main() -> Result<()> {
   debug!("loaded config: {:?}", app);
 
   loop {
-    main_loop(&app).instrument(info_span!("main_loop")).await?;
+    main_loop(&app).await?;
 
     if app.once {
       break;
@@ -92,11 +92,12 @@ async fn main() -> Result<()> {
   Ok(())
 }
 
+#[instrument(skip_all)]
 async fn main_loop(app: &App) -> Result<()> {
   let region = DefaultRegionChain::builder()
     .build()
     .region()
-    .instrument(debug_span!("loading default region"))
+    .instrument(info_span!("loading default region"))
     .await
     .unwrap();
 
@@ -106,18 +107,23 @@ async fn main_loop(app: &App) -> Result<()> {
       let provider = AssumeRoleProvider::builder(root_role)
         .session_name("ctrl-cidr")
         .region(region.clone())
-        .build(Arc::new(DefaultCredentialsChain::builder().build().await) as Arc<_>);
+        .build(Arc::new(
+          DefaultCredentialsChain::builder()
+            .build()
+            .instrument(trace_span!("build cred chain"))
+            .await,
+        ) as Arc<_>);
 
       let root_config = aws_config::from_env()
         .credentials_provider(provider)
         .load()
-        .instrument(debug_span!("performing assume role"))
+        .instrument(debug_span!("assume role for root domain"))
         .await;
       aws_sdk_route53::Client::new(&root_config)
     } else {
       info!("no root role");
       let base_aws_config = aws_config::load_from_env()
-        .instrument(debug_span!("load aws config from env"))
+        .instrument(info_span!("load aws config from env"))
         .await;
       aws_sdk_route53::Client::new(&base_aws_config)
     }
@@ -143,13 +149,27 @@ async fn main_loop(app: &App) -> Result<()> {
     let provider = AssumeRoleProvider::builder(sub_role)
       .session_name("ctrl-cidr")
       .region(region.clone())
-      .build(Arc::new(DefaultCredentialsChain::builder().build().await) as Arc<_>);
+      .build(Arc::new(
+        DefaultCredentialsChain::builder()
+          .build()
+          .instrument(info_span!("build cred chain"))
+          .await,
+      ) as Arc<_>);
 
-    let sub_config = aws_config::from_env().credentials_provider(provider).load().await;
+    let sub_config = aws_config::from_env()
+      .credentials_provider(provider)
+      .load()
+      .instrument(info_span!("build aws_config for subdomain", sub_role))
+      .await;
     let sub_r53 = aws_sdk_route53::Client::new(&sub_config);
-    let mut zones = sub_r53.list_hosted_zones().into_paginator().items().send();
+    let mut zones = sub_r53
+      .list_hosted_zones()
+      .into_paginator()
+      .items()
+      .send()
+      .instrument(info_span!("fetch subdomain zones"));
 
-    while let Some(Ok(zone)) = zones.next().await {
+    while let Some(Ok(zone)) = zones.inner_mut().next().await {
       // ignore private zones
       if zone.config().unwrap().private_zone() {
         debug!(name = zone.name(), id = zone.id(), "skipping private zone");
@@ -161,6 +181,7 @@ async fn main_loop(app: &App) -> Result<()> {
         .get_hosted_zone()
         .id(zone.id().unwrap())
         .send()
+        .instrument(info_span!("get subdomain delegation set", zone_name = zone.name()))
         .await?
         .delegation_set()
         .unwrap()
@@ -194,6 +215,7 @@ async fn main_loop(app: &App) -> Result<()> {
           .hosted_zone_id(&rid)
           .change_batch(cb)
           .send()
+          .instrument(info_span!("upsert NS record"))
           .await?;
       }
     }
