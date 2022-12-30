@@ -1,3 +1,5 @@
+use std::{env, sync::Arc, time::Duration};
+
 use anyhow::Result;
 use argh::FromArgs;
 use aws_config::{
@@ -5,12 +7,6 @@ use aws_config::{
   sts::AssumeRoleProvider,
 };
 use aws_sdk_route53::model as rm;
-use std::sync::Arc;
-use std::time::Duration;
-use tokio::time::sleep;
-use tokio_stream::StreamExt;
-
-// tracing
 use opentelemetry::{
   sdk::{
     trace::{self, RandomIdGenerator, Sampler},
@@ -19,8 +15,10 @@ use opentelemetry::{
   KeyValue,
 };
 use opentelemetry_otlp::WithExportConfig;
+use tokio::time::sleep;
+use tokio_stream::StreamExt;
 use tracing::{debug, debug_span, info, info_span, instrument, trace_span, Instrument};
-use tracing_subscriber::{filter::LevelFilter, layer::SubscriberExt, util::SubscriberInitExt};
+use tracing_subscriber::{filter::EnvFilter, layer::SubscriberExt, util::SubscriberInitExt};
 
 #[derive(Debug, FromArgs)]
 /// DNS promoter
@@ -53,7 +51,7 @@ async fn main() -> Result<()> {
     .with_exporter(
       opentelemetry_otlp::new_exporter()
         .tonic()
-        .with_endpoint("http://localhost:4317")
+        .with_endpoint(env::var("TRACE_ENDPOINT").unwrap_or("http://localhost:4317".to_string()))
         .with_timeout(Duration::from_secs(3)),
     )
     .with_trace_config(
@@ -64,14 +62,10 @@ async fn main() -> Result<()> {
     )
     .install_batch(opentelemetry::runtime::Tokio)?;
 
-  let tracer = tracing_opentelemetry::layer().with_tracer(tracer);
-
-  let stdout_logger = tracing_subscriber::fmt::layer();
-
   tracing_subscriber::registry()
-    .with(LevelFilter::INFO)
-    .with(stdout_logger)
-    .with(tracer)
+    .with(tracing_subscriber::fmt::layer())
+    .with(tracing_opentelemetry::layer().with_tracer(tracer))
+    .with(EnvFilter::from_default_env())
     .init();
 
   let app: App = argh::from_env();
