@@ -11,7 +11,7 @@ argh = "0.1"
 
 # AWS
 aws-types = "0.52"
-aws-config = "0.52"
+aws-config = "0.53"
 aws-sdk-route53 = "0.22"
 aws-sdk-acm = "0.22"
 
