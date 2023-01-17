@@ -12,9 +12,17 @@ Normally, an operator (or CI) would need access to manage Route53 in multiple ac
 
 # Configuration
 
-TODO root account policy
+The role passed in as `--root-role` needs these permissions in IAM (on top of assume role policy):
 
-TODO for each account to promote subdomains from, create IAM role with these policy and allow assume role
+```
+"route53:ChangeResourceRecordSets",
+"route53:ListHostedZones",
+```
+
+For sub account roles, you could use these AWS managed policies:
+
+- `AmazonRoute53ReadOnlyAccess`
+-`AWSCertificateManagerReadOnly`
 
 # Misc
 

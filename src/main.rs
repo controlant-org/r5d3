@@ -1,74 +1,53 @@
-use std::{env, sync::Arc, time::Duration};
+use std::{sync::Arc, time::Duration};
 
 use anyhow::Result;
-use argh::FromArgs;
 use aws_config::{
   default_provider::{credentials::DefaultCredentialsChain, region::DefaultRegionChain},
   sts::AssumeRoleProvider,
 };
 use aws_sdk_route53::model as rm;
-use opentelemetry::{
-  sdk::{
-    trace::{self, RandomIdGenerator, Sampler},
-    Resource,
-  },
-  KeyValue,
-};
-use opentelemetry_otlp::WithExportConfig;
+use clap::Parser;
 use tokio::time::sleep;
 use tokio_stream::StreamExt;
-use tracing::{debug, debug_span, info, info_span, instrument, trace_span, Instrument};
-use tracing_subscriber::{filter::EnvFilter, layer::SubscriberExt, util::SubscriberInitExt};
+use tracing::{debug, debug_span, info, info_span, instrument, trace_span, warn, Instrument};
 
-#[derive(Debug, FromArgs)]
 /// DNS promoter
+#[derive(Parser, Debug)]
+#[command(author, version, about, long_about = None)]
 struct App {
-  #[argh(switch)]
   /// run controller without actually performing any modifications
+  #[arg(long)]
   dry_run: bool,
 
-  #[argh(switch, short = 'o')]
   /// run controller just once
+  #[arg(short, long)]
   once: bool,
 
-  #[argh(option, short = 'd')]
   /// root domain for the controller
+  #[arg(short = 'd', long)]
   root_domain: String,
 
-  #[argh(option, short = 'r')]
   /// optional role to assume for the root domain, not needed if controller is run in the root domain account
+  #[arg(short, long)]
   root_role: Option<String>,
 
-  #[argh(option, short = 's')]
-  /// roles to assume for subdomains
+  #[arg(short, long = "sub-role")]
+  /// roles to assume for subdomains (sub accounts)
   sub_roles: Vec<String>,
+
+  /// AWS regions to check ACM certificates in
+  #[arg(short, long = "acm-region")]
+  acm_regions: Option<Vec<String>>,
 }
+
+mod acm;
+mod o11y;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-  let tracer = opentelemetry_otlp::new_pipeline()
-    .tracing()
-    .with_exporter(
-      opentelemetry_otlp::new_exporter()
-        .tonic()
-        .with_endpoint(env::var("TRACE_ENDPOINT").unwrap_or("http://localhost:4317".to_string()))
-        .with_timeout(Duration::from_secs(3)),
-    )
-    .with_trace_config(
-      trace::config()
-        .with_sampler(Sampler::AlwaysOn)
-        .with_id_generator(RandomIdGenerator::default())
-        .with_resource(Resource::new(vec![KeyValue::new("service.name", "r5d3")])),
-    )
-    .install_batch(opentelemetry::runtime::Tokio)?;
+  o11y::setup()?;
 
-  tracing_subscriber::registry()
-    .with(tracing_subscriber::fmt::layer())
-    .with(tracing_opentelemetry::layer().with_tracer(tracer))
-    .with(EnvFilter::from_default_env())
-    .init();
-
-  let app: App = argh::from_env();
+  let app = App::parse();
   debug!("loaded config: {:?}", app);
 
   loop {
@@ -140,6 +119,8 @@ async fn main_loop(app: &App) -> Result<()> {
   info!(id = rid, "found root domain zone id");
 
   for sub_role in app.sub_roles.iter() {
+    let mut subdomains = Vec::new();
+
     let provider = AssumeRoleProvider::builder(sub_role)
       .session_name("ctrl-cidr")
       .region(region.clone())
@@ -169,6 +150,8 @@ async fn main_loop(app: &App) -> Result<()> {
         debug!(name = zone.name(), id = zone.id(), "skipping private zone");
         continue;
       }
+
+      subdomains.push(zone.name().unwrap().trim_end_matches('.').to_string());
 
       // first ensure the zone is delegated to the root domain
       let nsrr: Vec<_> = sub_r53
@@ -202,7 +185,7 @@ async fn main_loop(app: &App) -> Result<()> {
         .build();
 
       if app.dry_run {
-        info!("would upsert NS record: {:?}", &cb);
+        warn!("would upsert NS record: {:?}", &cb);
       } else {
         root_r53
           .change_resource_record_sets()
@@ -210,6 +193,54 @@ async fn main_loop(app: &App) -> Result<()> {
           .change_batch(cb)
           .send()
           .instrument(info_span!("upsert NS record"))
+          .await?;
+      }
+    }
+
+    let cbs = if let Some(ref acm_regions) = app.acm_regions {
+      let mut ret = Vec::new();
+      for ar in acm_regions {
+        use aws_types::region::Region;
+
+        let provider = AssumeRoleProvider::builder(sub_role)
+          .session_name("ctrl-cidr")
+          .region(region.clone())
+          .build(Arc::new(
+            DefaultCredentialsChain::builder()
+              .build()
+              .instrument(info_span!("build cred chain"))
+              .await,
+          ) as Arc<_>);
+
+        let sub_config = aws_config::from_env()
+          .credentials_provider(provider)
+          .region(Region::new(ar.clone()))
+          .load()
+          .instrument(info_span!("build aws_config for subdomain", sub_role))
+          .await;
+        let sub_acm = aws_sdk_acm::Client::new(&sub_config);
+
+        let vals = acm::find_validations(sub_acm, &app.root_domain, &subdomains).await?;
+        ret.extend(vals);
+      }
+
+      ret
+    } else {
+      let sub_acm = aws_sdk_acm::Client::new(&sub_config);
+
+      acm::find_validations(sub_acm, &app.root_domain, &subdomains).await?
+    };
+
+    for cb in cbs {
+      if app.dry_run {
+        warn!("would upsert DNS validation record: {:?}", &cb);
+      } else {
+        root_r53
+          .change_resource_record_sets()
+          .hosted_zone_id(&rid)
+          .change_batch(cb)
+          .send()
+          .instrument(info_span!("upsert DNS validation record"))
           .await?;
       }
     }
