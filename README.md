@@ -22,7 +22,7 @@ The role passed in as `--root-role` needs these permissions in IAM (on top of as
 For sub account roles, you could use these AWS managed policies:
 
 - `AmazonRoute53ReadOnlyAccess`
--`AWSCertificateManagerReadOnly`
+- `AWSCertificateManagerReadOnly`
 
 # Misc
 
