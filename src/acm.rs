@@ -1,4 +1,5 @@
 use anyhow::Result;
+use aws_sdk_acm::model as am;
 use aws_sdk_route53::model as rm;
 use tokio_stream::StreamExt;
 use tracing::{info_span, instrument, Instrument};
@@ -37,6 +38,9 @@ pub async fn find_validations(
       .collect();
 
     for v in val {
+      if *v.validation_method().unwrap() != am::ValidationMethod::Dns {
+        continue;
+      }
       let domain = v.domain_name().unwrap();
       if subdomains.iter().find(|s| domain.ends_with(*s)).is_none() && domain.ends_with(root_domain) {
         let rr = v.resource_record().unwrap();
