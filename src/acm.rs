@@ -19,7 +19,6 @@ pub async fn find_validations(
     .instrument(info_span!("list ACM certificates"));
 
   while let Some(Ok(cert)) = certs.inner_mut().next().await {
-    //
     let val: Vec<_> = acm
       .describe_certificate()
       .certificate_arn(cert.certificate_arn().unwrap())

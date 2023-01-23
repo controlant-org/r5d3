@@ -45,7 +45,7 @@ mod o11y;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-  o11y::setup()?;
+  o11y::setup();
 
   let app = App::parse();
   debug!("loaded config: {:?}", app);
@@ -60,7 +60,7 @@ async fn main() -> Result<()> {
     sleep(Duration::from_secs(5 * 60)).await;
   }
 
-  opentelemetry::global::shutdown_tracer_provider();
+  o11y::teardown();
 
   Ok(())
 }
@@ -119,6 +119,9 @@ async fn main_loop(app: &App) -> Result<()> {
   info!(id = rid, "found root domain zone id");
 
   for sub_role in app.sub_roles.iter() {
+    let span = info_span!("sub_role", role = sub_role);
+    let _guard = span.enter();
+
     let mut subdomains = Vec::new();
 
     let provider = AssumeRoleProvider::builder(sub_role)
