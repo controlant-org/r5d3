@@ -1,6 +1,6 @@
 use anyhow::Result;
-use aws_sdk_acm::model as am;
-use aws_sdk_route53::model as rm;
+use aws_sdk_acm::types as am;
+use aws_sdk_route53::types as rm;
 use tokio_stream::StreamExt;
 use tracing::{info_span, instrument, Instrument};
 

@@ -5,7 +5,7 @@ use aws_config::{
   default_provider::{credentials::DefaultCredentialsChain, region::DefaultRegionChain},
   sts::AssumeRoleProvider,
 };
-use aws_sdk_route53::model as rm;
+use aws_sdk_route53::types as rm;
 use clap::Parser;
 use tokio::time::sleep;
 use tokio_stream::StreamExt;
