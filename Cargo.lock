@@ -175,9 +175,9 @@ dependencies = [
 
 [[package]]
 name = "aws-sdk-acm"
-version = "0.25.0"
+version = "0.25.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e53afd28ed27c5c3ca8dee3e453e303693834fa4e5bcdc62e24a5bdeb5934b4a"
+checksum = "759738f918e36360231bcffff7dcaa63cd0d30ba053100d870f52fe4e6d9f7c7"
 dependencies = [
  "aws-credential-types",
  "aws-endpoint",
