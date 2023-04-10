@@ -200,9 +200,9 @@ dependencies = [
 
 [[package]]
 name = "aws-sdk-route53"
-version = "0.25.0"
+version = "0.25.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1c7fd9ced771e3a7ea7cba426654165fd98b688aa848c2ba7501d34da83d9b14"
+checksum = "ef2291febc252e186126525524ae233dd3d82b7284a3926a2344808c35981cb0"
 dependencies = [
  "aws-credential-types",
  "aws-endpoint",
