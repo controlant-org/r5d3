@@ -1,6 +1,6 @@
 [package]
 name = "r5d3"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2021"
 authors = ["LOU Xun <xun.lou@controlant.com>"]
 description = "DNS automation for multi-account Route53 setup"
