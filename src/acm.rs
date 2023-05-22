@@ -43,25 +43,25 @@ pub async fn find_validations(
       }
       let domain = v.domain_name().unwrap();
       if subdomains.iter().find(|s| domain.ends_with(*s)).is_none() && domain.ends_with(root_domain) {
-        let rr = v.resource_record().unwrap();
+        if let Some(rr) = v.resource_record() {
+          let cb = rm::ChangeBatch::builder()
+            .changes(
+              rm::Change::builder()
+                .action(rm::ChangeAction::Upsert)
+                .resource_record_set(
+                  rm::ResourceRecordSet::builder()
+                    .r#type(rr.r#type().unwrap().as_str().into())
+                    .name(rr.name().unwrap())
+                    .resource_records(rm::ResourceRecord::builder().value(rr.value().unwrap()).build())
+                    .ttl(86400)
+                    .build(),
+                )
+                .build(),
+            )
+            .build();
 
-        let cb = rm::ChangeBatch::builder()
-          .changes(
-            rm::Change::builder()
-              .action(rm::ChangeAction::Upsert)
-              .resource_record_set(
-                rm::ResourceRecordSet::builder()
-                  .r#type(rr.r#type().unwrap().as_str().into())
-                  .name(rr.name().unwrap())
-                  .resource_records(rm::ResourceRecord::builder().value(rr.value().unwrap()).build())
-                  .ttl(86400)
-                  .build(),
-              )
-              .build(),
-          )
-          .build();
-
-        cbs.push(cb);
+          cbs.push(cb);
+        }
       }
     }
   }
