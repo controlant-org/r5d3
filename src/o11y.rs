@@ -24,7 +24,10 @@ pub fn setup() {
         trace::config()
           .with_sampler(Sampler::AlwaysOn)
           .with_id_generator(RandomIdGenerator::default())
-          .with_resource(Resource::new(vec![KeyValue::new("service.name", "r5d3")])),
+          .with_resource(Resource::new(vec![
+            KeyValue::new("service.name", "r5d3"),
+            KeyValue::new("service.version", env!("CARGO_PKG_VERSION")),
+          ])),
       )
       .install_batch(opentelemetry::runtime::Tokio)
       .expect("failed to install otlp pipeline");
