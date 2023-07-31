@@ -1,43 +1,40 @@
-use std::{sync::Arc, time::Duration};
+use std::{env, sync::Arc, time::Duration};
 
 use anyhow::Result;
-use aws_config::{
-  default_provider::{credentials::DefaultCredentialsChain, region::DefaultRegionChain},
-  sts::AssumeRoleProvider,
-};
+use aws_config::{default_provider::region::DefaultRegionChain, SdkConfig};
 use aws_sdk_route53::types as rm;
+use aws_types::region::Region;
 use clap::Parser;
 use tokio::time::sleep;
 use tokio_stream::StreamExt;
-use tracing::{debug, debug_span, info, info_span, instrument, trace_span, warn, Instrument};
+use tracing::{debug, info, info_span, instrument, warn, Instrument};
 
-/// DNS promoter
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 struct App {
-  /// run controller without actually performing any modifications
+  /// run the controller without actually performing any modifications
   #[arg(long)]
   dry_run: bool,
 
-  /// run controller just once
-  #[arg(short, long)]
+  /// run the controller just once
+  #[arg(long)]
   once: bool,
 
-  /// root domain for the controller
-  #[arg(short = 'd', long)]
+  /// root domain for the controller to manage
+  #[arg(long)]
   root_domain: String,
 
-  /// optional role to assume for the root domain, not needed if controller is run in the root domain account
-  #[arg(short, long)]
+  /// IAM role to assume for managing records on the root domain, will also discover all sub accounts in the organization. If not specificed, simply use the current environment
+  #[arg(long)]
   root_role: Option<String>,
 
-  #[arg(short, long = "sub-role")]
-  /// roles to assume for subdomains (sub accounts)
-  sub_roles: Vec<String>,
+  #[arg(long)]
+  /// IAM role (path + name) to (attempt to) assume in all sub accounts
+  discover_role: String,
 
-  /// AWS regions to check ACM certificates in
-  #[arg(short, long = "acm-region")]
-  acm_regions: Option<Vec<String>>,
+  /// AWS regions to check ACM certificates in. If not specified, only checks the default region
+  #[arg(long = "region")]
+  regions: Option<Vec<String>>,
 }
 
 mod acm;
@@ -67,7 +64,7 @@ async fn main() -> Result<()> {
 
 #[instrument(skip_all)]
 async fn main_loop(app: &App) -> Result<()> {
-  let region = DefaultRegionChain::builder()
+  let default_region = DefaultRegionChain::builder()
     .build()
     .region()
     .instrument(info_span!("loading default region"))
@@ -77,27 +74,11 @@ async fn main_loop(app: &App) -> Result<()> {
   let root_r53 = {
     if let Some(root_role) = app.root_role.as_ref() {
       info!(root_role, "using root role");
-      let provider = AssumeRoleProvider::builder(root_role)
-        .session_name("ctrl-cidr")
-        .region(region.clone())
-        .build(Arc::new(
-          DefaultCredentialsChain::builder()
-            .build()
-            .instrument(trace_span!("build cred chain"))
-            .await,
-        ) as Arc<_>);
 
-      let root_config = aws_config::from_env()
-        .credentials_provider(provider)
-        .load()
-        .instrument(debug_span!("assume role for root domain"))
-        .await;
-      aws_sdk_route53::Client::new(&root_config)
+      aws_sdk_route53::Client::new(&assume_role(root_role, default_region.clone()).await)
     } else {
       info!("no root role");
-      let base_aws_config = aws_config::load_from_env()
-        .instrument(info_span!("load aws config from env"))
-        .await;
+      let base_aws_config = aws_config::load_from_env().await;
       aws_sdk_route53::Client::new(&base_aws_config)
     }
   };
@@ -118,28 +99,31 @@ async fn main_loop(app: &App) -> Result<()> {
 
   info!(id = rid, "found root domain zone id");
 
-  for sub_role in app.sub_roles.iter() {
-    let span = info_span!("sub_role", role = sub_role);
+  let accounts = discover_accounts(&app.root_role)
+    .await
+    .expect("failed to discover accounts");
+
+  for acc in accounts {
+    let span = info_span!("attempt to work on account", account = acc);
     let _guard = span.enter();
+
+    let sub_role = format!("arn:aws:iam::{}:role{}", acc, app.discover_role);
+
+    // ignore non-existing role
+    let sts = aws_sdk_sts::Client::new(&assume_role(&sub_role, default_region.clone()).await);
+    match sts.get_caller_identity().send().await {
+      Ok(_) => {
+        info!("successfully assumed role");
+      }
+      Err(e) => {
+        debug!("ignore failed assume role: {:?}", e);
+        continue;
+      }
+    }
 
     let mut subdomains = Vec::new();
 
-    let provider = AssumeRoleProvider::builder(sub_role)
-      .session_name("ctrl-cidr")
-      .region(region.clone())
-      .build(Arc::new(
-        DefaultCredentialsChain::builder()
-          .build()
-          .instrument(info_span!("build cred chain"))
-          .await,
-      ) as Arc<_>);
-
-    let sub_config = aws_config::from_env()
-      .credentials_provider(provider)
-      .load()
-      .instrument(info_span!("build aws_config for subdomain", sub_role))
-      .await;
-    let sub_r53 = aws_sdk_route53::Client::new(&sub_config);
+    let sub_r53 = aws_sdk_route53::Client::new(&assume_role(&sub_role, default_region.clone()).await);
     let mut zones = sub_r53
       .list_hosted_zones()
       .into_paginator()
@@ -200,28 +184,12 @@ async fn main_loop(app: &App) -> Result<()> {
       }
     }
 
-    let cbs = if let Some(ref acm_regions) = app.acm_regions {
+    let cbs = if let Some(ref regions) = app.regions {
       let mut ret = Vec::new();
-      for ar in acm_regions {
-        use aws_types::region::Region;
+      for r_str in regions {
+        let region = Region::new(r_str.clone());
 
-        let provider = AssumeRoleProvider::builder(sub_role)
-          .session_name("ctrl-cidr")
-          .region(region.clone())
-          .build(Arc::new(
-            DefaultCredentialsChain::builder()
-              .build()
-              .instrument(info_span!("build cred chain"))
-              .await,
-          ) as Arc<_>);
-
-        let sub_config = aws_config::from_env()
-          .credentials_provider(provider)
-          .region(Region::new(ar.clone()))
-          .load()
-          .instrument(info_span!("build aws_config for subdomain", sub_role))
-          .await;
-        let sub_acm = aws_sdk_acm::Client::new(&sub_config);
+        let sub_acm = aws_sdk_acm::Client::new(&assume_role(&sub_role, region).await);
 
         let vals = acm::find_validations(sub_acm, &app.root_domain, &subdomains).await?;
         ret.extend(vals);
@@ -229,7 +197,7 @@ async fn main_loop(app: &App) -> Result<()> {
 
       ret
     } else {
-      let sub_acm = aws_sdk_acm::Client::new(&sub_config);
+      let sub_acm = aws_sdk_acm::Client::new(&assume_role(&sub_role, default_region.clone()).await);
 
       acm::find_validations(sub_acm, &app.root_domain, &subdomains).await?
     };
@@ -243,11 +211,56 @@ async fn main_loop(app: &App) -> Result<()> {
           .hosted_zone_id(&rid)
           .change_batch(cb)
           .send()
-          .instrument(info_span!("upsert DNS validation record"))
+          .instrument(info_span!("upsert DNS validation records"))
           .await?;
       }
     }
   }
 
   Ok(())
+}
+
+async fn discover_accounts(root_role: &Option<String>) -> Result<Vec<String>> {
+  let config = match root_role {
+    Some(root_role) => {
+      let region = DefaultRegionChain::builder()
+        .build()
+        .region()
+        .instrument(info_span!("loading default region"))
+        .await
+        .expect("failed to load default region");
+
+      assume_role(root_role, region).await
+    }
+    None => aws_config::load_from_env().await,
+  };
+
+  let org = aws_sdk_organizations::Client::new(&config);
+
+  Ok(
+    org
+      .list_accounts()
+      .send()
+      .await?
+      .accounts()
+      .expect("failed to list accounts")
+      .into_iter()
+      .map(|a| a.id().expect("failed to extract account ID").to_string())
+      .collect(),
+  )
+}
+
+async fn assume_role(role: impl Into<String>, region: Region) -> SdkConfig {
+  use aws_config::{default_provider::credentials::DefaultCredentialsChain, sts::AssumeRoleProvider};
+
+  let provider = AssumeRoleProvider::builder(role)
+    .session_name(env!("CARGO_PKG_NAME"))
+    .region(region.clone())
+    .build(Arc::new(DefaultCredentialsChain::builder().build().await) as Arc<_>);
+
+  aws_config::from_env()
+    .credentials_provider(provider)
+    .region(region)
+    .load()
+    .await
 }
