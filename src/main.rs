@@ -113,7 +113,7 @@ async fn main_loop(app: &App) -> Result<()> {
     let sts = aws_sdk_sts::Client::new(&assume_role(&sub_role, default_region.clone()).await);
     match sts.get_caller_identity().send().await {
       Ok(_) => {
-        info!("successfully assumed role");
+        info!(account = acc, "successfully assumed role");
       }
       Err(e) => {
         debug!("ignore failed assume role: {:?}", e);
