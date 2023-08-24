@@ -1,6 +1,6 @@
 [package]
 name = "r5d3"
-version = "0.2.1"
+version = "0.2.2"
 edition = "2021"
 authors = ["LOU Xun <xun.lou@controlant.com>"]
 description = "DNS automation for multi-account Route53 setup"
@@ -12,10 +12,10 @@ clap = { version = "4", features = ["derive"] }
 # AWS
 aws-types = "0.56"
 aws-config = "0.56"
-aws-sdk-route53 = "0.29"
-aws-sdk-acm = "0.29"
-aws-sdk-organizations = "0.29"
-aws-sdk-sts = "0.29"
+aws-sdk-route53 = "0.30"
+aws-sdk-acm = "0.30"
+aws-sdk-organizations = "0.30"
+aws-sdk-sts = "0.30"
 
 # Runtime
 tokio = { version = "1", features = ["full"] }

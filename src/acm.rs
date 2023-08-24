@@ -38,7 +38,7 @@ pub async fn find_validations(
       .collect();
 
     for v in val {
-      if *v.validation_method().unwrap() != am::ValidationMethod::Dns {
+      if v.validation_method() != Some(&am::ValidationMethod::Dns) {
         continue;
       }
       let domain = v.domain_name().unwrap();
