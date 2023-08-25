@@ -236,18 +236,20 @@ async fn discover_accounts(root_role: &Option<String>) -> Result<Vec<String>> {
   };
 
   let org = aws_sdk_organizations::Client::new(&config);
+  let mut lc_stream = org.list_accounts().into_paginator().send();
 
-  Ok(
-    org
-      .list_accounts()
-      .send()
-      .await?
-      .accounts()
-      .expect("failed to list accounts")
+  let mut accounts = Vec::new();
+  while let Some(p) = lc_stream.next().await {
+    p.expect("failed to list accounts")
+      .accounts
+      .expect("failed to extract accounts")
       .into_iter()
-      .map(|a| a.id().expect("failed to extract account ID").to_string())
-      .collect(),
-  )
+      .for_each(|a| {
+        accounts.push(a.id.expect("failed to extract account ID"));
+      });
+  }
+
+  Ok(accounts)
 }
 
 async fn assume_role(role: impl Into<String>, region: Region) -> SdkConfig {
