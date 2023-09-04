@@ -26,4 +26,4 @@ tracing = { version = "0.1", features = ["attributes"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 opentelemetry = { version = "0.20", features = ["rt-tokio"] }
 opentelemetry-otlp = { version = "0.13", features = ["grpc-tonic"] }
-tracing-opentelemetry = "0.20"
+tracing-opentelemetry = "0.21"
