@@ -106,7 +106,7 @@ dependencies = [
  "aws-credential-types",
  "aws-http",
  "aws-sdk-sso",
- "aws-sdk-sts",
+ "aws-sdk-sts 0.30.0",
  "aws-smithy-async",
  "aws-smithy-client",
  "aws-smithy-http",
@@ -282,6 +282,30 @@ name = "aws-sdk-sts"
 version = "0.30.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a47ad6bf01afc00423d781d464220bf69fb6a674ad6629cbbcb06d88cdc2be82"
+dependencies = [
+ "aws-credential-types",
+ "aws-http",
+ "aws-runtime",
+ "aws-smithy-async",
+ "aws-smithy-client",
+ "aws-smithy-http",
+ "aws-smithy-json",
+ "aws-smithy-query",
+ "aws-smithy-runtime",
+ "aws-smithy-runtime-api",
+ "aws-smithy-types",
+ "aws-smithy-xml",
+ "aws-types",
+ "http",
+ "regex",
+ "tracing",
+]
+
+[[package]]
+name = "aws-sdk-sts"
+version = "0.31.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0c9ae1be8d5a934e61e42e739612a0173508eda3f78921337831bf57b65f0cff"
 dependencies = [
  "aws-credential-types",
  "aws-http",
@@ -1386,7 +1410,7 @@ dependencies = [
  "aws-sdk-acm",
  "aws-sdk-organizations",
  "aws-sdk-route53",
- "aws-sdk-sts",
+ "aws-sdk-sts 0.31.1",
  "aws-types",
  "clap",
  "opentelemetry",
