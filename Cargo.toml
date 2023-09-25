@@ -12,10 +12,10 @@ clap = { version = "4", features = ["derive"] }
 # AWS
 aws-types = "0.56"
 aws-config = "0.56"
-aws-sdk-route53 = "0.30"
-aws-sdk-acm = "0.30"
-aws-sdk-organizations = "0.30"
-aws-sdk-sts = "0.30"
+aws-sdk-route53 = "0.31"
+aws-sdk-acm = "0.31"
+aws-sdk-organizations = "0.31"
+aws-sdk-sts = "0.31"
 
 # Runtime
 tokio = { version = "1", features = ["full"] }
