@@ -148,7 +148,13 @@ async fn main_loop(app: &App) -> Result<()> {
       let zname = zone.name().unwrap();
 
       if zname != env {
-        debug!(name = zone.name(), id = zone.id(), "skipping non-matching zone");
+        warn!(
+          name = zone.name(),
+          id = zone.id(),
+          account = acc.id,
+          environment = env,
+          "found non-matching zone, skipping"
+        );
         continue;
       }
 
