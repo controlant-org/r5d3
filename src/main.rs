@@ -147,7 +147,7 @@ async fn main_loop(app: &App) -> Result<()> {
 
       let zname = zone.name().unwrap();
 
-      if zname != env {
+      if zname != format!("{}.{}.", env, app.root_domain) {
         warn!(
           name = zone.name(),
           id = zone.id(),
