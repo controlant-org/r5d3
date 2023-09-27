@@ -1,6 +1,6 @@
 [package]
 name = "r5d3"
-version = "0.2.3"
+version = "0.2.4"
 edition = "2021"
 authors = ["LOU Xun <xun.lou@controlant.com>"]
 description = "DNS automation for multi-account Route53 setup"
@@ -10,11 +10,11 @@ anyhow = "1"
 clap = { version = "4", features = ["derive"] }
 
 # AWS
+control-aws = { git = "https://github.com/controlant-org/control-aws.git", rev = "f19ee07" }
 aws-types = "0.56"
 aws-config = "0.56"
 aws-sdk-route53 = "0.31"
 aws-sdk-acm = "0.31"
-aws-sdk-organizations = "0.31"
 aws-sdk-sts = "0.31"
 
 # Runtime

@@ -104,16 +104,23 @@ async fn main_loop(app: &App) -> Result<()> {
     .expect("failed to discover accounts");
 
   for acc in accounts {
-    let span = info_span!("attempt to work on account", account = acc);
+    if acc.environment.is_none() {
+      info!("account has no environment tag, skipping");
+      continue;
+    }
+
+    let span = info_span!("attempt to work on account", account = acc.id);
     let _guard = span.enter();
 
-    let sub_role = format!("arn:aws:iam::{}:role{}", acc, app.discover_role);
+    let env = acc.environment.unwrap();
+
+    let sub_role = format!("arn:aws:iam::{}:role{}", acc.id, app.discover_role);
 
     // ignore non-existing role
     let sts = aws_sdk_sts::Client::new(&assume_role(&sub_role, default_region.clone()).await);
     match sts.get_caller_identity().send().await {
       Ok(_) => {
-        info!(account = acc, "successfully assumed role");
+        info!(account = acc.id, environment = env, "successfully assumed role");
       }
       Err(e) => {
         debug!("ignore failed assume role: {:?}", e);
@@ -138,7 +145,14 @@ async fn main_loop(app: &App) -> Result<()> {
         continue;
       }
 
-      subdomains.push(zone.name().unwrap().trim_end_matches('.').to_string());
+      let zname = zone.name().unwrap();
+
+      if zname != env {
+        debug!(name = zone.name(), id = zone.id(), "skipping non-matching zone");
+        continue;
+      }
+
+      subdomains.push(zname.trim_end_matches('.').to_string());
 
       // first ensure the zone is delegated to the root domain
       let nsrr: Vec<_> = sub_r53
@@ -162,7 +176,7 @@ async fn main_loop(app: &App) -> Result<()> {
             .resource_record_set(
               rm::ResourceRecordSet::builder()
                 .r#type(rm::RrType::Ns)
-                .name(zone.name().unwrap())
+                .name(zname)
                 .set_resource_records(Some(nsrr))
                 .ttl(86400)
                 .build(),
@@ -220,7 +234,7 @@ async fn main_loop(app: &App) -> Result<()> {
   Ok(())
 }
 
-async fn discover_accounts(root_role: &Option<String>) -> Result<Vec<String>> {
+async fn discover_accounts(root_role: &Option<String>) -> Result<Vec<control_aws::org::Account>> {
   let config = match root_role {
     Some(root_role) => {
       let region = DefaultRegionChain::builder()
@@ -235,21 +249,7 @@ async fn discover_accounts(root_role: &Option<String>) -> Result<Vec<String>> {
     None => aws_config::load_from_env().await,
   };
 
-  let org = aws_sdk_organizations::Client::new(&config);
-  let mut lc_stream = org.list_accounts().into_paginator().send();
-
-  let mut accounts = Vec::new();
-  while let Some(p) = lc_stream.next().await {
-    p.expect("failed to list accounts")
-      .accounts
-      .expect("failed to extract accounts")
-      .into_iter()
-      .for_each(|a| {
-        accounts.push(a.id.expect("failed to extract account ID"));
-      });
-  }
-
-  Ok(accounts)
+  Ok(control_aws::org::discover_accounts(config).await?)
 }
 
 async fn assume_role(role: impl Into<String>, region: Region) -> SdkConfig {
