@@ -105,7 +105,7 @@ async fn main_loop(app: &App) -> Result<()> {
 
   for acc in accounts {
     if acc.environment.is_none() {
-      info!("account has no environment tag, skipping");
+      info!(account = acc.id, "account has no environment tag, skipping");
       continue;
     }
 
