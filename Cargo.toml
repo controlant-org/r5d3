@@ -10,7 +10,7 @@ anyhow = "1"
 clap = { version = "4", features = ["derive"] }
 
 # AWS
-control-aws = { git = "https://github.com/controlant-org/control-aws.git", rev = "f19ee07" }
+control-aws = { git = "https://github.com/controlant-org/control-aws.git", rev = "afabc35" }
 aws-types = "0.56"
 aws-config = "0.56"
 aws-sdk-route53 = "0.31"

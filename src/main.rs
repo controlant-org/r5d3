@@ -1,7 +1,7 @@
-use std::{env, sync::Arc, time::Duration};
+use std::time::Duration;
 
 use anyhow::Result;
-use aws_config::{default_provider::region::DefaultRegionChain, SdkConfig};
+use aws_config::default_provider::region::DefaultRegionChain;
 use aws_sdk_route53::types as rm;
 use aws_types::region::Region;
 use clap::Parser;
@@ -75,7 +75,7 @@ async fn main_loop(app: &App) -> Result<()> {
     if let Some(root_role) = app.root_role.as_ref() {
       info!(root_role, "using root role");
 
-      aws_sdk_route53::Client::new(&assume_role(root_role, default_region.clone()).await)
+      aws_sdk_route53::Client::new(&control_aws::assume_role(root_role, default_region.clone()).await)
     } else {
       info!("no root role");
       let base_aws_config = aws_config::load_from_env().await;
@@ -117,7 +117,7 @@ async fn main_loop(app: &App) -> Result<()> {
     let sub_role = format!("arn:aws:iam::{}:role{}", acc.id, app.discover_role);
 
     // ignore non-existing role
-    let sts = aws_sdk_sts::Client::new(&assume_role(&sub_role, default_region.clone()).await);
+    let sts = aws_sdk_sts::Client::new(&control_aws::assume_role(&sub_role, default_region.clone()).await);
     match sts.get_caller_identity().send().await {
       Ok(_) => {
         info!(account = acc.id, environment = env, "successfully assumed role");
@@ -130,7 +130,7 @@ async fn main_loop(app: &App) -> Result<()> {
 
     let mut subdomains = Vec::new();
 
-    let sub_r53 = aws_sdk_route53::Client::new(&assume_role(&sub_role, default_region.clone()).await);
+    let sub_r53 = aws_sdk_route53::Client::new(&control_aws::assume_role(&sub_role, default_region.clone()).await);
     let mut zones = sub_r53
       .list_hosted_zones()
       .into_paginator()
@@ -209,7 +209,7 @@ async fn main_loop(app: &App) -> Result<()> {
       for r_str in regions {
         let region = Region::new(r_str.clone());
 
-        let sub_acm = aws_sdk_acm::Client::new(&assume_role(&sub_role, region).await);
+        let sub_acm = aws_sdk_acm::Client::new(&control_aws::assume_role(&sub_role, region).await);
 
         let vals = acm::find_validations(sub_acm, &app.root_domain, &subdomains).await?;
         ret.extend(vals);
@@ -217,7 +217,7 @@ async fn main_loop(app: &App) -> Result<()> {
 
       ret
     } else {
-      let sub_acm = aws_sdk_acm::Client::new(&assume_role(&sub_role, default_region.clone()).await);
+      let sub_acm = aws_sdk_acm::Client::new(&control_aws::assume_role(&sub_role, default_region.clone()).await);
 
       acm::find_validations(sub_acm, &app.root_domain, &subdomains).await?
     };
@@ -250,25 +250,10 @@ async fn discover_accounts(root_role: &Option<String>) -> Result<Vec<control_aws
         .await
         .expect("failed to load default region");
 
-      assume_role(root_role, region).await
+      control_aws::assume_role(root_role, region).await
     }
     None => aws_config::load_from_env().await,
   };
 
   Ok(control_aws::org::discover_accounts(config).await?)
-}
-
-async fn assume_role(role: impl Into<String>, region: Region) -> SdkConfig {
-  use aws_config::{default_provider::credentials::DefaultCredentialsChain, sts::AssumeRoleProvider};
-
-  let provider = AssumeRoleProvider::builder(role)
-    .session_name(env!("CARGO_PKG_NAME"))
-    .region(region.clone())
-    .build(Arc::new(DefaultCredentialsChain::builder().build().await) as Arc<_>);
-
-  aws_config::from_env()
-    .credentials_provider(provider)
-    .region(region)
-    .load()
-    .await
 }

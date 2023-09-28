@@ -690,7 +690,7 @@ checksum = "acbf1af155f9b9ef647e42cdc158db4b64a1b61f743629225fde6f3e0be2a7c7"
 [[package]]
 name = "control-aws"
 version = "0.1.0"
-source = "git+https://github.com/controlant-org/control-aws.git?rev=f19ee07#f19ee07c2332667dd9c567dac05cc0f123ca83f6"
+source = "git+https://github.com/controlant-org/control-aws.git?rev=afabc35#afabc3569658c26ab8ce1819f332e91f96c70685"
 dependencies = [
  "aws-config",
  "aws-sdk-organizations",
