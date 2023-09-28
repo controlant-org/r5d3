@@ -71,17 +71,12 @@ async fn main_loop(app: &App) -> Result<()> {
     .await
     .unwrap();
 
-  let root_r53 = {
-    if let Some(root_role) = app.root_role.as_ref() {
-      info!(root_role, "using root role");
-
-      aws_sdk_route53::Client::new(&control_aws::assume_role(root_role, default_region.clone()).await)
-    } else {
-      info!("no root role");
-      let base_aws_config = aws_config::load_from_env().await;
-      aws_sdk_route53::Client::new(&base_aws_config)
-    }
+  let root_config = match app.root_role {
+    Some(ref root_role) => control_aws::assume_role(root_role, default_region.clone()).await,
+    None => aws_config::load_from_env().await,
   };
+
+  let root_r53 = aws_sdk_route53::Client::new(&root_config);
 
   let rid = root_r53
     .list_hosted_zones()
@@ -99,7 +94,7 @@ async fn main_loop(app: &App) -> Result<()> {
 
   info!(id = rid, "found root domain zone id");
 
-  let accounts = discover_accounts(&app.root_role)
+  let accounts = control_aws::org::discover_accounts(root_config)
     .await
     .expect("failed to discover accounts");
 
@@ -238,22 +233,4 @@ async fn main_loop(app: &App) -> Result<()> {
   }
 
   Ok(())
-}
-
-async fn discover_accounts(root_role: &Option<String>) -> Result<Vec<control_aws::org::Account>> {
-  let config = match root_role {
-    Some(root_role) => {
-      let region = DefaultRegionChain::builder()
-        .build()
-        .region()
-        .instrument(info_span!("loading default region"))
-        .await
-        .expect("failed to load default region");
-
-      control_aws::assume_role(root_role, region).await
-    }
-    None => aws_config::load_from_env().await,
-  };
-
-  Ok(control_aws::org::discover_accounts(config).await?)
 }
