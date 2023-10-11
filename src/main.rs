@@ -1,7 +1,6 @@
 use std::time::Duration;
 
 use anyhow::Result;
-use aws_config::default_provider::region::DefaultRegionChain;
 use aws_sdk_route53::types as rm;
 use aws_types::region::Region;
 use clap::Parser;
@@ -64,15 +63,8 @@ async fn main() -> Result<()> {
 
 #[instrument(skip_all)]
 async fn main_loop(app: &App) -> Result<()> {
-  let default_region = DefaultRegionChain::builder()
-    .build()
-    .region()
-    .instrument(info_span!("loading default region"))
-    .await
-    .unwrap();
-
   let root_config = match app.root_role {
-    Some(ref root_role) => control_aws::assume_role(root_role, default_region.clone()).await,
+    Some(ref root_role) => control_aws::assume_role(root_role, None).await,
     None => aws_config::load_from_env().await,
   };
 
@@ -112,7 +104,7 @@ async fn main_loop(app: &App) -> Result<()> {
     let sub_role = format!("arn:aws:iam::{}:role{}", acc.id, app.discover_role);
 
     // ignore non-existing role
-    let sts = aws_sdk_sts::Client::new(&control_aws::assume_role(&sub_role, default_region.clone()).await);
+    let sts = aws_sdk_sts::Client::new(&control_aws::assume_role(&sub_role, None).await);
     match sts.get_caller_identity().send().await {
       Ok(_) => {
         info!(account = acc.id, environment = env, "successfully assumed role");
@@ -125,7 +117,7 @@ async fn main_loop(app: &App) -> Result<()> {
 
     let mut subdomains = Vec::new();
 
-    let sub_r53 = aws_sdk_route53::Client::new(&control_aws::assume_role(&sub_role, default_region.clone()).await);
+    let sub_r53 = aws_sdk_route53::Client::new(&control_aws::assume_role(&sub_role, None).await);
     let mut zones = sub_r53
       .list_hosted_zones()
       .into_paginator()
@@ -204,7 +196,7 @@ async fn main_loop(app: &App) -> Result<()> {
       for r_str in regions {
         let region = Region::new(r_str.clone());
 
-        let sub_acm = aws_sdk_acm::Client::new(&control_aws::assume_role(&sub_role, region).await);
+        let sub_acm = aws_sdk_acm::Client::new(&control_aws::assume_role(&sub_role, Some(region)).await);
 
         let vals = acm::find_validations(sub_acm, &app.root_domain, &subdomains).await?;
         ret.extend(vals);
@@ -212,7 +204,7 @@ async fn main_loop(app: &App) -> Result<()> {
 
       ret
     } else {
-      let sub_acm = aws_sdk_acm::Client::new(&control_aws::assume_role(&sub_role, default_region.clone()).await);
+      let sub_acm = aws_sdk_acm::Client::new(&control_aws::assume_role(&sub_role, None).await);
 
       acm::find_validations(sub_acm, &app.root_domain, &subdomains).await?
     };
