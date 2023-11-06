@@ -14,7 +14,7 @@ control-aws = { git = "https://github.com/controlant-org/control-aws.git", rev =
 aws-types = "0.56"
 aws-config = "0.56"
 aws-sdk-route53 = "0.33"
-aws-sdk-acm = "0.33"
+aws-sdk-acm = "0.35"
 aws-sdk-sts = "0.33"
 
 # Runtime
