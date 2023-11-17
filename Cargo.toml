@@ -1,6 +1,6 @@
 [package]
 name = "r5d3"
-version = "0.2.5"
+version = "0.2.6"
 edition = "2021"
 authors = ["LOU Xun <xun.lou@controlant.com>"]
 description = "DNS automation for multi-account Route53 setup"
@@ -11,12 +11,12 @@ clap = { version = "4", features = ["derive"] }
 fastrand = "2"
 
 # AWS
-control-aws = { git = "https://github.com/controlant-org/control-aws.git", rev = "326b086" }
-aws-types = "0.57"
-aws-config = "0.57"
-aws-sdk-route53 = "0.36"
-aws-sdk-acm = "0.36"
-aws-sdk-sts = "0.36"
+control-aws = { git = "https://github.com/controlant-org/control-aws.git", rev = "d1c79d2" }
+aws-config = { version = "0.100", features = ["behavior-version-latest"] }
+aws-types = "0.100"
+aws-sdk-route53 = "0.37"
+aws-sdk-acm = "0.37"
+aws-sdk-sts = "0.37"
 
 # Runtime
 tokio = { version = "1", features = ["full"] }
@@ -29,3 +29,6 @@ opentelemetry = "0.21"
 opentelemetry_sdk = { version = "0.21", features = ["rt-tokio"] }
 opentelemetry-otlp = { version = "0.14", features = ["grpc-tonic"] }
 tracing-opentelemetry = "0.22"
+
+# [patch.'https://github.com/controlant-org/control-aws']
+# control-aws = { path = "../control-aws" }
