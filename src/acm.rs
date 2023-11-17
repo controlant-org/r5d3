@@ -1,7 +1,6 @@
 use anyhow::Result;
 use aws_sdk_acm::types as am;
 use aws_sdk_route53::types as rm;
-use tokio_stream::StreamExt;
 use tracing::{info_span, instrument, Instrument};
 
 #[instrument(skip_all)]
@@ -32,7 +31,6 @@ pub async fn find_validations(
       .certificate()
       .unwrap()
       .domain_validation_options()
-      .unwrap()
       .iter()
       .cloned()
       .collect();
@@ -41,7 +39,7 @@ pub async fn find_validations(
       if v.validation_method() != Some(&am::ValidationMethod::Dns) {
         continue;
       }
-      let domain = v.domain_name().unwrap();
+      let domain = v.domain_name();
       if subdomains.iter().find(|s| domain.ends_with(*s)).is_none() && domain.ends_with(root_domain) {
         if let Some(rr) = v.resource_record() {
           let cb = rm::ChangeBatch::builder()
@@ -50,15 +48,18 @@ pub async fn find_validations(
                 .action(rm::ChangeAction::Upsert)
                 .resource_record_set(
                   rm::ResourceRecordSet::builder()
-                    .r#type(rr.r#type().unwrap().as_str().into())
-                    .name(rr.name().unwrap())
-                    .resource_records(rm::ResourceRecord::builder().value(rr.value().unwrap()).build())
+                    .r#type(rr.r#type().as_str().into())
+                    .name(rr.name())
+                    .resource_records(rm::ResourceRecord::builder().value(rr.value()).build().unwrap())
                     .ttl(86400)
-                    .build(),
+                    .build()
+                    .unwrap(),
                 )
-                .build(),
+                .build()
+                .unwrap(),
             )
-            .build();
+            .build()
+            .unwrap();
 
           cbs.push(cb);
         }

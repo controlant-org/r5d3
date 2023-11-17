@@ -4,8 +4,8 @@ use anyhow::Result;
 use aws_sdk_route53::types as rm;
 use aws_types::region::Region;
 use clap::Parser;
+use control_aws::org::Account;
 use tokio::time::sleep;
-use tokio_stream::StreamExt;
 use tracing::{debug, info, info_span, instrument, warn, Instrument};
 
 #[derive(Parser, Debug)]
@@ -76,151 +76,162 @@ async fn main_loop(app: &App) -> Result<()> {
     .instrument(info_span!("list hosted zones on root domain"))
     .await?
     .hosted_zones()
-    .unwrap()
     .into_iter()
-    .find(|hz| hz.name().unwrap().starts_with(&app.root_domain))
+    .find(|hz| hz.name().starts_with(&app.root_domain))
     .unwrap()
     .id()
-    .unwrap()
     .to_string();
 
   info!(id = rid, "found root domain zone id");
 
-  let accounts = control_aws::org::discover_accounts(root_config)
-    .await
-    .expect("failed to discover accounts");
+  match control_aws::org::discover_accounts(root_config).await {
+    Ok(accounts) => {
+      for acc in accounts {
+        let aid = acc.id.clone();
+        work(app, acc, &root_r53, &rid)
+          .instrument(info_span!("work on account", account = aid))
+          .await
+          .expect("failed to work on account");
+      }
+    }
+    Err(e) => {
+      println!("Failed to fetch accounts: {}", e);
+      sleep(Duration::from_secs(fastrand::u64(60..300))).await;
+    }
+  }
 
-  for acc in accounts {
-    if acc.environment.is_none() {
-      info!(account = acc.id, "account has no environment tag, skipping");
+  Ok(())
+}
+
+async fn work(app: &App, acc: Account, root_r53: &aws_sdk_route53::Client, rid: &String) -> Result<()> {
+  if acc.environment.is_none() {
+    info!(account = acc.id, "account has no environment tag, skipping");
+    return Ok(());
+  }
+
+  let env = acc.environment.unwrap();
+
+  let sub_role = format!("arn:aws:iam::{}:role{}", acc.id, app.discover_role);
+
+  // ignore non-existing role
+  let sts = aws_sdk_sts::Client::new(&control_aws::assume_role(&sub_role, None).await);
+  match sts.get_caller_identity().send().await {
+    Ok(_) => {
+      info!(account = acc.id, environment = env, "successfully assumed role");
+    }
+    Err(e) => {
+      debug!("ignore failed assume role: {:?}", e);
+      return Ok(());
+    }
+  }
+
+  let mut subdomains = Vec::new();
+
+  let sub_r53 = aws_sdk_route53::Client::new(&control_aws::assume_role(&sub_role, None).await);
+  let mut zones = sub_r53
+    .list_hosted_zones()
+    .into_paginator()
+    .items()
+    .send()
+    .instrument(info_span!("fetch subdomain zones"));
+
+  while let Some(Ok(zone)) = zones.inner_mut().next().await {
+    // ignore private zones
+    if zone.config().unwrap().private_zone() {
+      debug!(name = zone.name(), id = zone.id(), "skipping private zone");
       continue;
     }
 
-    let span = info_span!("attempt to work on account", account = acc.id);
-    let _guard = span.enter();
+    let zname = zone.name();
 
-    let env = acc.environment.unwrap();
-
-    let sub_role = format!("arn:aws:iam::{}:role{}", acc.id, app.discover_role);
-
-    // ignore non-existing role
-    let sts = aws_sdk_sts::Client::new(&control_aws::assume_role(&sub_role, None).await);
-    match sts.get_caller_identity().send().await {
-      Ok(_) => {
-        info!(account = acc.id, environment = env, "successfully assumed role");
-      }
-      Err(e) => {
-        debug!("ignore failed assume role: {:?}", e);
-        continue;
-      }
+    if zname != format!("{}.{}.", env, app.root_domain) {
+      warn!(
+        name = zone.name(),
+        id = zone.id(),
+        account = acc.id,
+        environment = env,
+        "found non-matching zone, skipping"
+      );
+      continue;
     }
 
-    let mut subdomains = Vec::new();
+    subdomains.push(zname.trim_end_matches('.').to_string());
 
-    let sub_r53 = aws_sdk_route53::Client::new(&control_aws::assume_role(&sub_role, None).await);
-    let mut zones = sub_r53
-      .list_hosted_zones()
-      .into_paginator()
-      .items()
+    // first ensure the zone is delegated to the root domain
+    let nsrr: Vec<_> = sub_r53
+      .get_hosted_zone()
+      .id(zone.id())
       .send()
-      .instrument(info_span!("fetch subdomain zones"));
+      .instrument(info_span!("get subdomain delegation set", zone_name = zone.name()))
+      .await?
+      .delegation_set()
+      .unwrap()
+      .name_servers()
+      .iter()
+      .map(|ns| rm::ResourceRecord::builder().value(ns).build().unwrap())
+      .collect();
 
-    while let Some(Ok(zone)) = zones.inner_mut().next().await {
-      // ignore private zones
-      if zone.config().unwrap().private_zone() {
-        debug!(name = zone.name(), id = zone.id(), "skipping private zone");
-        continue;
-      }
+    let cb = rm::ChangeBatch::builder()
+      .changes(
+        rm::Change::builder()
+          .action(rm::ChangeAction::Upsert)
+          .resource_record_set(
+            rm::ResourceRecordSet::builder()
+              .r#type(rm::RrType::Ns)
+              .name(zname)
+              .set_resource_records(Some(nsrr))
+              .ttl(86400)
+              .build()
+              .unwrap(),
+          )
+          .build()
+          .unwrap(),
+      )
+      .build()
+      .unwrap();
 
-      let zname = zone.name().unwrap();
-
-      if zname != format!("{}.{}.", env, app.root_domain) {
-        warn!(
-          name = zone.name(),
-          id = zone.id(),
-          account = acc.id,
-          environment = env,
-          "found non-matching zone, skipping"
-        );
-        continue;
-      }
-
-      subdomains.push(zname.trim_end_matches('.').to_string());
-
-      // first ensure the zone is delegated to the root domain
-      let nsrr: Vec<_> = sub_r53
-        .get_hosted_zone()
-        .id(zone.id().unwrap())
+    if app.dry_run {
+      warn!("would upsert NS record: {:?}", &cb);
+    } else {
+      root_r53
+        .change_resource_record_sets()
+        .hosted_zone_id(rid)
+        .change_batch(cb)
         .send()
-        .instrument(info_span!("get subdomain delegation set", zone_name = zone.name()))
-        .await?
-        .delegation_set()
-        .unwrap()
-        .name_servers()
-        .unwrap()
-        .iter()
-        .map(|ns| rm::ResourceRecord::builder().value(ns).build())
-        .collect();
+        .instrument(info_span!("upsert NS record"))
+        .await?;
+    }
+  }
 
-      let cb = rm::ChangeBatch::builder()
-        .changes(
-          rm::Change::builder()
-            .action(rm::ChangeAction::Upsert)
-            .resource_record_set(
-              rm::ResourceRecordSet::builder()
-                .r#type(rm::RrType::Ns)
-                .name(zname)
-                .set_resource_records(Some(nsrr))
-                .ttl(86400)
-                .build(),
-            )
-            .build(),
-        )
-        .build();
+  let cbs = if let Some(ref regions) = app.regions {
+    let mut ret = Vec::new();
+    for r_str in regions {
+      let region = Region::new(r_str.clone());
 
-      if app.dry_run {
-        warn!("would upsert NS record: {:?}", &cb);
-      } else {
-        root_r53
-          .change_resource_record_sets()
-          .hosted_zone_id(&rid)
-          .change_batch(cb)
-          .send()
-          .instrument(info_span!("upsert NS record"))
-          .await?;
-      }
+      let sub_acm = aws_sdk_acm::Client::new(&control_aws::assume_role(&sub_role, Some(region)).await);
+
+      let vals = acm::find_validations(sub_acm, &app.root_domain, &subdomains).await?;
+      ret.extend(vals);
     }
 
-    let cbs = if let Some(ref regions) = app.regions {
-      let mut ret = Vec::new();
-      for r_str in regions {
-        let region = Region::new(r_str.clone());
+    ret
+  } else {
+    let sub_acm = aws_sdk_acm::Client::new(&control_aws::assume_role(&sub_role, None).await);
 
-        let sub_acm = aws_sdk_acm::Client::new(&control_aws::assume_role(&sub_role, Some(region)).await);
+    acm::find_validations(sub_acm, &app.root_domain, &subdomains).await?
+  };
 
-        let vals = acm::find_validations(sub_acm, &app.root_domain, &subdomains).await?;
-        ret.extend(vals);
-      }
-
-      ret
+  for cb in cbs {
+    if app.dry_run {
+      warn!("would upsert DNS validation record: {:?}", &cb);
     } else {
-      let sub_acm = aws_sdk_acm::Client::new(&control_aws::assume_role(&sub_role, None).await);
-
-      acm::find_validations(sub_acm, &app.root_domain, &subdomains).await?
-    };
-
-    for cb in cbs {
-      if app.dry_run {
-        warn!("would upsert DNS validation record: {:?}", &cb);
-      } else {
-        root_r53
-          .change_resource_record_sets()
-          .hosted_zone_id(&rid)
-          .change_batch(cb)
-          .send()
-          .instrument(info_span!("upsert DNS validation records"))
-          .await?;
-      }
+      root_r53
+        .change_resource_record_sets()
+        .hosted_zone_id(rid)
+        .change_batch(cb)
+        .send()
+        .instrument(info_span!("upsert DNS validation records"))
+        .await?;
     }
   }
 

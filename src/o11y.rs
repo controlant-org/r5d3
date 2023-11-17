@@ -1,13 +1,11 @@
 use std::{env, time::Duration};
 
-use opentelemetry::{
-  sdk::{
-    trace::{self, RandomIdGenerator, Sampler},
-    Resource,
-  },
-  KeyValue,
-};
+use opentelemetry::KeyValue;
 use opentelemetry_otlp::WithExportConfig;
+use opentelemetry_sdk::{
+  trace::{self, RandomIdGenerator, Sampler},
+  Resource,
+};
 use tracing_subscriber::{filter::EnvFilter, layer::SubscriberExt, util::SubscriberInitExt};
 
 pub fn setup() {
@@ -29,7 +27,7 @@ pub fn setup() {
             KeyValue::new("service.version", env!("CARGO_PKG_VERSION")),
           ])),
       )
-      .install_batch(opentelemetry::runtime::Tokio)
+      .install_batch(opentelemetry_sdk::runtime::Tokio)
       .expect("failed to install otlp pipeline");
 
     tracing_opentelemetry::layer().with_tracer(tracer)

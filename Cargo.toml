@@ -8,14 +8,15 @@ description = "DNS automation for multi-account Route53 setup"
 [dependencies]
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }
+fastrand = "2"
 
 # AWS
-control-aws = { git = "https://github.com/controlant-org/control-aws.git", rev = "73d5ed2" }
-aws-types = "0.56"
-aws-config = "0.56"
-aws-sdk-route53 = "0.33"
-aws-sdk-acm = "0.33"
-aws-sdk-sts = "0.33"
+control-aws = { git = "https://github.com/controlant-org/control-aws.git", rev = "326b086" }
+aws-types = "0.57"
+aws-config = "0.57"
+aws-sdk-route53 = "0.36"
+aws-sdk-acm = "0.36"
+aws-sdk-sts = "0.36"
 
 # Runtime
 tokio = { version = "1", features = ["full"] }
@@ -24,6 +25,7 @@ tokio-stream = "0.1"
 # Tracing
 tracing = { version = "0.1", features = ["attributes"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-opentelemetry = { version = "0.20", features = ["rt-tokio"] }
-opentelemetry-otlp = { version = "0.13", features = ["grpc-tonic"] }
-tracing-opentelemetry = "0.21"
+opentelemetry = "0.21"
+opentelemetry_sdk = { version = "0.21", features = ["rt-tokio"] }
+opentelemetry-otlp = { version = "0.14", features = ["grpc-tonic"] }
+tracing-opentelemetry = "0.22"
