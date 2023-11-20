@@ -20,7 +20,6 @@ aws-sdk-sts = "0.37"
 
 # Runtime
 tokio = { version = "1", features = ["full"] }
-tokio-stream = "0.1"
 
 # Tracing
 tracing = { version = "0.1", features = ["attributes"] }
