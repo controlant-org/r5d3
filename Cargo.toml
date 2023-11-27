@@ -12,11 +12,11 @@ fastrand = "2"
 
 # AWS
 control-aws = { git = "https://github.com/controlant-org/control-aws.git", rev = "d1c79d2" }
-aws-config = { version = "0.100", features = ["behavior-version-latest"] }
-aws-types = "0.100"
-aws-sdk-route53 = "0.37"
-aws-sdk-acm = "0.37"
-aws-sdk-sts = "0.37"
+aws-config = { version = "1.0", features = ["behavior-version-latest"] }
+aws-types = "1.0"
+aws-sdk-route53 = "1.1"
+aws-sdk-acm = "1.2"
+aws-sdk-sts = "1.2"
 
 # Runtime
 tokio = { version = "1", features = ["full"] }
