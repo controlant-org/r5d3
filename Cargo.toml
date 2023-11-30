@@ -11,12 +11,11 @@ clap = { version = "4", features = ["derive"] }
 fastrand = "2"
 
 # AWS
-control-aws = { git = "https://github.com/controlant-org/control-aws.git", rev = "d1c79d2" }
-aws-config = { version = "0.100", features = ["behavior-version-latest"] }
-aws-types = "0.100"
-aws-sdk-route53 = "0.37"
-aws-sdk-acm = "0.37"
-aws-sdk-sts = "0.37"
+control-aws = { git = "https://github.com/controlant-org/control-aws.git", rev = "b26c6b7" }
+aws-config = { version = "1", features = ["behavior-version-latest"] }
+aws-sdk-route53 = "1"
+aws-sdk-acm = "1"
+aws-sdk-sts = "1"
 
 # Runtime
 tokio = { version = "1", features = ["full"] }

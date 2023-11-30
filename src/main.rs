@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use anyhow::Result;
 use aws_sdk_route53::types as rm;
-use aws_types::region::Region;
+use aws_config::Region;
 use clap::Parser;
 use control_aws::org::Account;
 use tokio::time::sleep;
