@@ -179,9 +179,9 @@ dependencies = [
 
 [[package]]
 name = "aws-sdk-acm"
-version = "1.7.0"
+version = "1.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "928bd4c7da1472faf94e0d10e39f8bb20e0b9d4ddb1fe56c57c1430da12516e6"
+checksum = "55b5d93450c55418047e6895ff875b12bda844060b3b1decd23a73ad87d931b4"
 dependencies = [
  "aws-credential-types",
  "aws-http",
@@ -224,9 +224,9 @@ dependencies = [
 
 [[package]]
 name = "aws-sdk-route53"
-version = "1.7.0"
+version = "1.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "66dd8ad2033d4dd8470ba1341c6fa046b17c83b529bcb0fe3cc63ff1b9be9693"
+checksum = "6b5003dc86117977925439ee3deda05340a8430f8f0d342d2c2ad1c7d60e26a9"
 dependencies = [
  "aws-credential-types",
  "aws-http",
@@ -293,9 +293,9 @@ dependencies = [
 
 [[package]]
 name = "aws-sdk-sts"
-version = "1.7.0"
+version = "1.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d27259dcd835b6069260edec09487383f40f45c1cc7f02c74258eff8a22555a4"
+checksum = "8e3c7c3dcec7cccd24a13953eedf0f2964c2d728d22112744274cf0098ad2e35"
 dependencies = [
  "aws-credential-types",
  "aws-http",
