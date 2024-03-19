@@ -1,8 +1,8 @@
 use std::time::Duration;
 
 use anyhow::Result;
-use aws_sdk_route53::types as rm;
 use aws_config::Region;
+use aws_sdk_route53::types as rm;
 use clap::Parser;
 use control_aws::org::Account;
 use tokio::time::sleep;
@@ -84,7 +84,7 @@ async fn main_loop(app: &App) -> Result<()> {
 
   info!(id = rid, "found root domain zone id");
 
-  match control_aws::org::discover_accounts(root_config).await {
+  match control_aws::org::discover_accounts(&root_config).await {
     Ok(accounts) => {
       for acc in accounts {
         let aid = acc.id.clone();
