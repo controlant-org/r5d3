@@ -25,7 +25,7 @@ tracing = { version = "0.1", features = ["attributes"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 opentelemetry = "0.22"
 opentelemetry_sdk = { version = "0.22", features = ["rt-tokio"] }
-opentelemetry-otlp = { version = "0.15", features = ["grpc-tonic"] }
+opentelemetry-otlp = { version = "0.16", features = ["grpc-tonic"] }
 tracing-opentelemetry = "0.23"
 
 # [patch.'https://github.com/controlant-org/control-aws']
